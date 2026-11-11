@@ -778,7 +778,7 @@ addEventListener('keydown', () => Audio.init(), { capture: true });
 // ============================================================ hands
 // Gloved hands, built in WebXR grip space: -Z = toward the thumb (top of the fist), +X = back of the right hand
 // (-X for the left), -Y = where an extended index finger points.
-const gloveFabric = new THREE.MeshStandardMaterial({ color: '#2a2d33', roughness: 0.85, metalness: 0.05 });
+const gloveFabric = new THREE.MeshStandardMaterial({ color: '#3b404a', roughness: 0.8, metalness: 0.05 });
 const gloveDark = new THREE.MeshStandardMaterial({ color: '#16181c', roughness: 0.55, metalness: 0.2 });
 const shooterMetal = new THREE.MeshStandardMaterial({ color: '#a3aab4', metalness: 0.9, roughness: 0.25 });
 function makeGlove(side) {
@@ -803,11 +803,11 @@ function makeGlove(side) {
   const armDir = new V3(0, 0.55, 0.83).normalize(); arm.quaternion.setFromUnitVectors(UP, armDir); arm.position.copy(armDir).multiplyScalar(0.135).add(new V3(side * 0.012, 0, 0)); g.add(arm);
   const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.006, 8, 20), gloveDark); cuff.quaternion.setFromUnitVectors(new V3(0, 0, 1), armDir); cuff.position.copy(armDir).multiplyScalar(0.05).add(new V3(side * 0.012, 0, 0)); g.add(cuff);
   // web-shooter on the inside of the wrist
-  const shooter = new THREE.Group(); shooter.position.copy(armDir).multiplyScalar(0.075).add(new V3(-side * 0.026, -0.006, 0)); shooter.quaternion.setFromUnitVectors(UP, armDir); g.add(shooter);
+  const shooter = new THREE.Group(); shooter.position.copy(armDir).multiplyScalar(0.05).add(new V3(-side * 0.026, -0.006, 0)); shooter.quaternion.setFromUnitVectors(UP, armDir); g.add(shooter);
   const pod = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.045, 0.024), shooterMetal); shooter.add(pod);
   const band = new THREE.Mesh(new THREE.TorusGeometry(0.036, 0.004, 6, 24), shooterMetal); band.rotation.x = Math.PI / 2; band.position.x = side * 0.026; shooter.add(band);
   const nozzle = new THREE.Object3D(); nozzle.position.set(0, -0.03, 0); shooter.add(nozzle);
-  return { g, index: fingers[0], point, nozzle };
+  return { g, index: fingers[0], point, nozzle, side };
 }
 function makeReticle() {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: reticleTex, transparent: true, depthTest: false, toneMapped: false, fog: false, opacity: 0.95 }));
@@ -825,13 +825,17 @@ const hands = [0, 1].map((i) => ({
 }));
 for (const h of hands) {
   rig.add(h.ctrl); rig.add(h.grip);
+  // gloves are built up front so they always exist; they follow the grip pose (or the pointer pose as a fallback)
+  h.glove = makeGlove(h.i === 0 ? -1 : 1); h.grip.add(h.glove.g); h.glove.g.visible = false;
   h.ctrl.addEventListener('connected', (e) => {
     h.src = e.data; h.handed = e.data.handedness || h.handed;
-    if (h.glove) h.grip.remove(h.glove.g);
-    h.glove = makeGlove(h.handed === 'left' ? -1 : 1); h.grip.add(h.glove.g);
-    if (h.handed === 'left') h.ctrl.add(wrist.mesh);
+    try {
+      const side = h.handed === 'left' ? -1 : 1;
+      if (h.glove.side !== side) { const parent = h.glove.g.parent; parent.remove(h.glove.g); h.glove = makeGlove(side); parent.add(h.glove.g); }
+    } catch (err) { console.error(err); setTimeout(() => toast('hand error: ' + err.message, 0.05), 500); }
+    try { if (h.handed === 'left') h.ctrl.add(wrist.mesh); } catch (err) { console.error(err); }
   });
-  h.ctrl.addEventListener('disconnected', () => { h.src = null; letGo(h, false); if (h.glove) { h.grip.remove(h.glove.g); h.glove = null; } });
+  h.ctrl.addEventListener('disconnected', () => { h.src = null; letGo(h, false); h.glove.g.visible = false; });
 }
 
 // ============================================================ wrist HUD & intro board
@@ -1235,8 +1239,13 @@ function updateHands(dt) {
   for (const h of hands) {
     if (xr && h.src) {
       h.dir.set(0, 0, -1).applyQuaternion(h.ctrl.getWorldQuaternion(_q2));
-      if (h.glove) { h.glove.nozzle.getWorldPosition(h.origin); const tv = h.src.gamepad ? h.src.gamepad.buttons[0].value : 1; h.glove.index.visible = tv > 0.2; h.glove.point.visible = tv <= 0.2; }
-      else h.ctrl.getWorldPosition(h.origin);
+      // follow the grip pose; if the browser gives no grip pose, ride on the pointer pose instead
+      const holder = h.grip.visible ? h.grip : h.ctrl;
+      if (h.glove.g.parent !== holder) { holder.add(h.glove.g); h.glove.g.position.set(0, 0, holder === h.ctrl ? 0.06 : 0); }
+      h.glove.g.visible = true; h.glove.g.updateMatrixWorld(true);
+      h.glove.nozzle.getWorldPosition(h.origin);
+      const tv = h.src.gamepad && h.src.gamepad.buttons[0] ? h.src.gamepad.buttons[0].value : 1;
+      h.glove.index.visible = tv > 0.2; h.glove.point.visible = tv <= 0.2;
     }
     // reticle + aim line: GREEN = a web will stick there, RED = out of reach / nothing to grab
     const show = (xr && h.src && !h.rope && !(h.web && h.web.state === 'flying')) || (!xr && !demo && !h.rope && h.i === 1);
