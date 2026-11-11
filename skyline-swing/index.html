@@ -470,6 +470,66 @@ for (let i = 0; i < CARS; i++) {
 }
 carBody.frustumCulled = carTop.frustumCulled = false; scene.add(carBody); scene.add(carTop);
 
+// ============================================================ drones to hunt
+const DRONE_N = 20, drones = [];
+{
+  const body = new THREE.MeshStandardMaterial({ color: '#2b2e33', metalness: 0.6, roughness: 0.35 });
+  const arm = new THREE.MeshStandardMaterial({ color: '#4a4f57', metalness: 0.7, roughness: 0.4 });
+  const prop = new THREE.MeshBasicMaterial({ color: '#c9ced6', transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+  const lightMat = new THREE.MeshBasicMaterial({ color: '#ff3020', toneMapped: false });
+  for (let k = 0; k < DRONE_N; k++) {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 0.18, 14), body));
+    const cam = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), arm); cam.position.set(0, -0.14, 0.18); g.add(cam);
+    const rotors = [];
+    for (const [x, z] of [[0.55, 0.55], [-0.55, 0.55], [0.55, -0.55], [-0.55, -0.55]]) {
+      const a = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, 0.78), arm); a.position.set(x / 2, 0.02, z / 2); a.rotation.y = Math.atan2(x, z); g.add(a);
+      const r = new THREE.Mesh(new THREE.CircleGeometry(0.3, 18).rotateX(-Math.PI / 2), prop); r.position.set(x, 0.1, z); g.add(r); rotors.push(r);
+    }
+    const light = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), lightMat); light.position.set(0, 0.12, 0); g.add(light);
+    g.scale.setScalar(1.3);
+    const ax = AVENUES[Math.floor(srange(1, AVENUES.length - 1))] + srange(-8, 8);
+    const base = new V3(ax, srange(28, 110), srange(-CITY_Z * 0.8, CITY_Z * 0.8));
+    if (inPark(base.x, base.z)) base.z = srange(-200, CITY_Z * 0.8);
+    g.position.copy(base); scene.add(g);
+    drones.push({ g, rotors, light, base, pos: g.position, phase: srand() * 6.28, alive: true, fall: null });
+  }
+}
+function droneInSights(h) {
+  let best = null;
+  for (const d of drones) {
+    if (!d.alive) continue;
+    const rel = _c.subVectors(d.pos, h.origin), t = rel.dot(h.dir);
+    if (t < 2 || t > WEB_RANGE) continue;
+    const miss = rel.addScaledVector(h.dir, -t).length();
+    if (miss < 1.6 + t * 0.012 && (!best || t < best.t)) best = { d, t };
+  }
+  if (best) { const wall = raycastCity(h.origin, h.dir, best.t); if (wall) return null; }
+  return best;
+}
+function captureDrone(d, h) {
+  d.alive = false; d.fall = new V3(rand(-1, 1), 0, rand(-1, 1));
+  S.drones++; S.score += 100; Audio.drone(); buzz(h, 0.8, 90);
+  toast(S.drones === DRONE_N ? 'ALL DRONES DOWN!' : `DRONE ${S.drones}/${DRONE_N}  +100`);
+  puff(d.pos, 18, 4);
+  const wrap = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 8), new THREE.MeshStandardMaterial({ map: webTex, transparent: true, color: '#ffffff', roughness: 0.6, depthWrite: false }));
+  d.g.add(wrap);
+}
+function updateDrones(dt) {
+  for (const d of drones) {
+    if (d.alive) {
+      d.phase += dt;
+      d.pos.set(d.base.x + Math.sin(d.phase * 0.35) * 6, d.base.y + Math.sin(d.phase * 1.3) * 0.6, d.base.z + Math.sin(d.phase * 0.2) * 25);
+      d.g.rotation.y = Math.sin(d.phase * 0.2) * 0.6; d.g.rotation.z = Math.sin(d.phase * 1.1) * 0.06;
+      for (const r of d.rotors) r.rotation.y += dt * 40;
+      d.light.visible = Math.sin(d.phase * 6) > 0.3;
+    } else if (d.g.visible) {
+      d.fall.y -= GRAV * 0.6 * dt; d.pos.addScaledVector(d.fall, dt); d.g.rotation.x += dt * 2; d.g.rotation.z += dt * 1.3;
+      if (d.pos.y < 0.4) { d.pos.y = 0.4; puff(d.pos, 10, 3); d.g.visible = false; }
+    }
+  }
+}
+
 // ============================================================ shared textures
 const webTex = makeTex(256, 256, (g) => {
   g.strokeStyle = 'rgba(255,255,255,.95)'; g.translate(128, 128); const sp = 14;
@@ -696,6 +756,10 @@ const Audio = {
   release(pan) { this.noise({ type: 'bandpass', f0: 900, f1: 2600, q: 1.2, dur: 0.2, gain: 0.08, pan, attack: 0.03 }); },
   flip() { this.noise({ type: 'bandpass', f0: 1800, f1: 350, q: 1.1, dur: 0.6, gain: 0.25, attack: 0.08 }); },
   land(k) { this.tone({ f0: 95, f1: 40, dur: 0.3, gain: 0.25 + 0.45 * k }); this.noise({ type: 'lowpass', f0: 700, f1: 90, dur: 0.35, gain: 0.2 + 0.35 * k }); },
+  perfect() { this.noise({ type: 'bandpass', f0: 600, f1: 3200, q: 1.4, dur: 0.35, gain: 0.25, attack: 0.02 }); this.tone({ f0: 660, f1: 990, dur: 0.25, type: 'triangle', gain: 0.07, verb: 0.4 }); },
+  step() { this.noise({ type: 'lowpass', f0: 500, f1: 120, dur: 0.08, gain: 0.18 }); },
+  drone() { this.noise({ type: 'lowpass', f0: 3000, f1: 200, dur: 0.6, gain: 0.3 }); this.tone({ f0: 880, f1: 220, dur: 0.5, type: 'square', gain: 0.04, filter: 2000 }); },
+  miss() { this.tone({ f0: 300, f1: 140, dur: 0.12, type: 'square', gain: 0.03 }); },
   slow(on) { this.tone({ f0: on ? 420 : 90, f1: on ? 70 : 420, dur: 0.55, gain: 0.1, verb: 0.5 }); },
   horn() {
     const pan = rand(-1, 1), f = rand(350, 480), d = rand(0.15, 0.5);
@@ -712,12 +776,38 @@ addEventListener('pointerdown', () => Audio.init(), { capture: true });
 addEventListener('keydown', () => Audio.init(), { capture: true });
 
 // ============================================================ hands
-const gloveMat = new THREE.MeshStandardMaterial({ color: '#2b2f36', roughness: 0.5, metalness: 0.4 });
-function makeShooter() {
+// Gloved hands, built in WebXR grip space: -Z = toward the thumb (top of the fist), +X = back of the right hand
+// (-X for the left), -Y = where an extended index finger points.
+const gloveFabric = new THREE.MeshStandardMaterial({ color: '#2a2d33', roughness: 0.85, metalness: 0.05 });
+const gloveDark = new THREE.MeshStandardMaterial({ color: '#16181c', roughness: 0.55, metalness: 0.2 });
+const shooterMetal = new THREE.MeshStandardMaterial({ color: '#a3aab4', metalness: 0.9, roughness: 0.25 });
+function makeGlove(side) {
   const g = new THREE.Group();
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.05, 18, 1, true).rotateX(Math.PI / 2), gloveMat); band.position.z = 0.09; g.add(band);
-  const pod = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.02, 0.045), new THREE.MeshStandardMaterial({ color: '#8d939c', metalness: 0.9, roughness: 0.25 })); pod.position.set(0, -0.032, 0.08); g.add(pod);
-  return g;
+  const cap = (r, len) => new THREE.CapsuleGeometry(r, len, 4, 10);
+  // back of hand / palm
+  const palm = new THREE.Mesh(cap(0.03, 0.05).rotateX(Math.PI / 2), gloveFabric); palm.scale.set(0.62, 1.1, 1); palm.position.set(side * 0.034, -0.006, 0.004); g.add(palm);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.045, 0.07), gloveDark); plate.position.set(side * 0.052, -0.012, 0.0); g.add(plate);
+  // curled fingers wrapping the handle (axis = Z); gap faces the palm
+  const arc = Math.PI * 1.45, rot = (side > 0 ? 0 : Math.PI) - (arc + (2 * Math.PI - arc) / 2);
+  const fingers = [];
+  [[-0.036, 0.023], [-0.013, 0.025], [0.009, 0.024], [0.029, 0.021]].forEach(([z, r], i) => {
+    const f = new THREE.Mesh(new THREE.TorusGeometry(r, 0.0098, 8, 18, arc), gloveFabric); f.rotation.z = rot; f.position.z = z; g.add(f); fingers.push(f);
+    const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 10, 8), gloveDark); knuckle.position.set(side * 0.03, -0.024, z); g.add(knuckle);
+  });
+  // index finger pose when the trigger is released: pointing forward (-Y)
+  const point = new THREE.Mesh(cap(0.0095, 0.055), gloveFabric); point.position.set(side * 0.018, -0.07, -0.036); point.visible = false; g.add(point);
+  // thumb resting on the top face
+  const thumb = new THREE.Mesh(cap(0.0105, 0.035), gloveFabric); thumb.rotation.x = 0.5; thumb.position.set(side * 0.004, -0.032, -0.058); g.add(thumb);
+  // forearm sleeve, angled down and back toward the elbow
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.036, 0.22, 16), gloveFabric);
+  const armDir = new V3(0, 0.55, 0.83).normalize(); arm.quaternion.setFromUnitVectors(UP, armDir); arm.position.copy(armDir).multiplyScalar(0.135).add(new V3(side * 0.012, 0, 0)); g.add(arm);
+  const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.006, 8, 20), gloveDark); cuff.quaternion.setFromUnitVectors(new V3(0, 0, 1), armDir); cuff.position.copy(armDir).multiplyScalar(0.05).add(new V3(side * 0.012, 0, 0)); g.add(cuff);
+  // web-shooter on the inside of the wrist
+  const shooter = new THREE.Group(); shooter.position.copy(armDir).multiplyScalar(0.075).add(new V3(-side * 0.026, -0.006, 0)); shooter.quaternion.setFromUnitVectors(UP, armDir); g.add(shooter);
+  const pod = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.045, 0.024), shooterMetal); shooter.add(pod);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.036, 0.004, 6, 24), shooterMetal); band.rotation.x = Math.PI / 2; band.position.x = side * 0.026; shooter.add(band);
+  const nozzle = new THREE.Object3D(); nozzle.position.set(0, -0.03, 0); shooter.add(nozzle);
+  return { g, index: fingers[0], point, nozzle };
 }
 function makeReticle() {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: reticleTex, transparent: true, depthTest: false, toneMapped: false, fog: false, opacity: 0.95 }));
@@ -728,15 +818,20 @@ function makeAimLine() {
   const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.35, depthWrite: false, toneMapped: false, fog: false }));
   m.renderOrder = 39; m.visible = false; scene.add(m); return m;
 }
-const OK_COL = new THREE.Color('#38ff6a'), NO_COL = new THREE.Color('#ff3b3b');
+const OK_COL = new THREE.Color('#38ff6a'), NO_COL = new THREE.Color('#ff3b3b'), DRONE_COL = new THREE.Color('#ffd23a');
 const hands = [0, 1].map((i) => ({
-  i, ctrl: renderer.xr.getController(i), src: null, handed: i === 0 ? 'left' : 'right', prev: {},
-  rope: null, web: null, pending: null, origin: new V3(), dir: new V3(), reticle: makeReticle(), aimLine: makeAimLine(), shooter: makeShooter(), aim: null,
+  i, ctrl: renderer.xr.getController(i), grip: renderer.xr.getControllerGrip(i), glove: null, src: null, handed: i === 0 ? 'left' : 'right', prev: {},
+  rope: null, web: null, pending: null, origin: new V3(), dir: new V3(), reticle: makeReticle(), aimLine: makeAimLine(), aim: null,
 }));
 for (const h of hands) {
-  h.ctrl.add(h.shooter); rig.add(h.ctrl);
-  h.ctrl.addEventListener('connected', (e) => { h.src = e.data; h.handed = e.data.handedness || h.handed; if (h.handed === 'left') h.ctrl.add(wrist.mesh); });
-  h.ctrl.addEventListener('disconnected', () => { h.src = null; letGo(h, false); });
+  rig.add(h.ctrl); rig.add(h.grip);
+  h.ctrl.addEventListener('connected', (e) => {
+    h.src = e.data; h.handed = e.data.handedness || h.handed;
+    if (h.glove) h.grip.remove(h.glove.g);
+    h.glove = makeGlove(h.handed === 'left' ? -1 : 1); h.grip.add(h.glove.g);
+    if (h.handed === 'left') h.ctrl.add(wrist.mesh);
+  });
+  h.ctrl.addEventListener('disconnected', () => { h.src = null; letGo(h, false); if (h.glove) { h.grip.remove(h.glove.g); h.glove = null; } });
 }
 
 // ============================================================ wrist HUD & intro board
@@ -751,7 +846,7 @@ function drawWrist() {
   const { g, w, h } = wrist; g.clearRect(0, 0, w, h); roundRect(g, 6, 6, w - 12, h - 12, 26); g.fillStyle = 'rgba(12,14,18,.82)'; g.fill();
   g.fillStyle = '#fff'; g.textAlign = 'left'; g.font = `800 112px ${FONT}`; g.fillText(String(Math.round(S.speed * 3.6)), 28, 122);
   g.font = `700 30px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('KM/H', 32, 162);
-  g.textAlign = 'right'; g.fillStyle = '#fff'; g.font = `700 46px ${FONT}`; g.fillText(`${Math.round(S.P.y)} m`, w - 28, 80); g.fillText(`${S.score}`, w - 28, 150);
+  g.textAlign = 'right'; g.fillStyle = '#fff'; g.font = `700 46px ${FONT}`; g.fillText(`${Math.round(S.P.y)} m`, w - 28, 70); g.fillText(`${S.score}`, w - 28, 128); g.font = `700 32px ${FONT}`; g.fillText(`drones ${S.drones}/${DRONE_N}`, w - 28, 176);
   g.fillStyle = 'rgba(255,255,255,.2)'; g.fillRect(28, 200, w - 56, 18); g.fillStyle = S.slow ? '#ffd27a' : '#ffffff'; g.fillRect(28, 200, (w - 56) * S.meter, 18);
   g.textAlign = 'left'; g.font = `700 22px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('SLOW-MO', 30, 246);
   wrist.tex.needsUpdate = true;
@@ -760,16 +855,16 @@ const intro = makePanel(1024, 560, 2.4);
 {
   const { g, w, h } = intro; roundRect(g, 8, 8, w - 16, h - 16, 26); g.fillStyle = 'rgba(14,16,20,.8)'; g.fill();
   g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = `800 84px ${FONT}`; g.fillText('SKYLINE SWING', w / 2, 120);
-  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'jump · in the air: FLIP (push stick sideways to cartwheel)'], ['B / Y', 'hold for slow-mo'], ['LOOK', 'turn your head · right stick snap-turns · hold left stick click: back to roof']];
-  lines.forEach(([k, v], i) => { const y = 215 + i * 62; g.textAlign = 'right'; g.font = `800 34px ${FONT}`; g.fillStyle = '#ffd27a'; g.fillText(k, 250, y); g.textAlign = 'left'; g.font = `500 31px ${FONT}`; g.fillStyle = '#fff'; g.fillText(v, 275, y); });
-  g.textAlign = 'center'; g.font = `600 30px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('Tip: swing alternating hands, release near the top of each arc', w / 2, 525);
+  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release · web drones!'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'ZIP to where you point · aim at a roof edge to vault up'], ['B / Y', 'hold for slow-mo'], ['LOOK', 'turn your head · right stick snap-turns · hold left stick click: back to roof']];
+  lines.forEach(([k, v], i) => { const y = 215 + i * 62; g.textAlign = 'right'; g.font = `800 34px ${FONT}`; g.fillStyle = '#ffd27a'; g.fillText(k, 250, y); g.textAlign = 'left'; g.font = `500 28px ${FONT}`; g.fillStyle = '#fff'; g.fillText(v, 275, y, w - 300); });
+  g.textAlign = 'center'; g.font = `600 24px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('Let go at the top of a swing for a boost · look down to dive · hit walls fast to run on them · web the drones', w / 2, 525);
   intro.tex.needsUpdate = true; scene.add(intro.mesh);
 }
 
 // ============================================================ player
 const GRAV = 17, AIR_ACC = 6, RUN = 8, MAXS = 75, WEB_RANGE = 150;
 const S = { P: new V3(), V: new V3(), yaw: 0, pitch: 0, roll: 0, grounded: false, prevY: 0, flipT: -1, flipDir: 1, flips: 0,
-  slow: false, meter: 1, score: 0, speed: 0, blazing: false, move: new THREE.Vector2(), timeScale: 1 };
+  slow: false, meter: 1, score: 0, speed: 0, blazing: false, move: new THREE.Vector2(), timeScale: 1, zip: null, wall: null, diving: false, drones: 0, stepT: 0 };
 // pick a spawn rooftop: a tall prewar setback near midtown with a big roof
 let SPAWN = new V3(0, 0, 0), SPAWN_YAW = 0;
 {
@@ -794,7 +889,7 @@ let SPAWN = new V3(0, 0, 0), SPAWN_YAW = 0;
 }
 function respawn() {
   for (const h of hands) letGo(h, false);
-  S.P.copy(SPAWN); S.V.set(0, 0, 0); S.yaw = SPAWN_YAW; S.pitch = -0.12; S.flipT = -1; S.grounded = true;
+  S.P.copy(SPAWN); S.V.set(0, 0, 0); S.yaw = SPAWN_YAW; S.pitch = -0.12; S.flipT = -1; S.grounded = true; S.zip = null; S.wall = null;
 }
 
 // ---- ray casting against the city using the spatial grid
@@ -815,12 +910,12 @@ function raycastCity(o, d, maxT) {
         let t1 = (mn - oo) / dd, t2 = (mx - oo) / dd, s = -1; if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; s = 1; }
         if (t1 > tmin) { tmin = t1; axis = a; sign = s; } if (t2 < tmax) tmax = t2; if (tmin > tmax) { ok = false; break; }
       }
-      if (ok && axis >= 0) best = { t: tmin, axis, sign };
+      if (ok && axis >= 0) best = { t: tmin, axis, sign, b };
     }
   }
   if (!best) return null;
   const p = o.clone().addScaledVector(d, best.t), n = new V3(); n.setComponent(best.axis, best.sign);
-  return { p, n, t: best.t };
+  return { p, n, t: best.t, b: best.b };
 }
 // Find a good swing anchor: must be well above the chest, so you fall into an arc instead of being dragged.
 function findAnchor(h) {
@@ -842,6 +937,12 @@ function findAnchor(h) {
 function shoot(h) {
   if (h.web) { h.web.release(); h.web = null; }
   h.rope = null;
+  const dr = droneInSights(h);
+  if (dr) {
+    Audio.thwip(h.handed === 'left' ? -0.6 : 0.6); buzz(h, 0.25, 25);
+    const w = freeWeb(); h.web = w; w.shoot(h.origin, dr.d.pos, true); h.pending = { drone: dr.d, p: dr.d.pos.clone(), n: new V3(0, 1, 0) };
+    return;
+  }
   const hit = findAnchor(h);
   const pan = h.handed === 'left' ? -0.6 : 0.6;
   Audio.thwip(pan); buzz(h, 0.25, 25);
@@ -852,6 +953,9 @@ function shoot(h) {
 }
 function onAttach(h) {
   const hit = h.pending; if (!hit) return;
+  if (hit.drone) { captureDrone(hit.drone, h); if (h.web) { h.web.state = 'falling'; h.web.life = 1.5; h.web = null; } h.pending = null; return; }
+  if (hit.zip) { S.zip = { target: hit.target, land: hit.land, h, t: 0 }; S.grounded = false; S.wall = null; Audio.stick(0); buzz(h, 0.6, 60); return; }
+  S.wall = null;
   const chest = _a.set(S.P.x, S.P.y + 1.3, S.P.z);
   h.rope = { A: hit.p.clone(), L: chest.distanceTo(hit.p), climb: false };
   addSplat(hit.p, hit.n); puff(hit.p, 6, 2);
@@ -867,9 +971,16 @@ function onAttach(h) {
 function letGo(h, flick) {
   if (h.web) { h.web.release(); h.web = null; }
   if (h.rope && flick && !S.grounded) {
-    // a small flick at release, mostly preserving momentum
-    if (S.V.y > 0) S.V.y += 1.5;
-    Audio.release(h.handed === 'left' ? -0.6 : 0.6);
+    const r = h.rope, hs = Math.hypot(S.V.x, S.V.z);
+    const ahead = ((S.P.x - r.A.x) * S.V.x + (S.P.z - r.A.z) * S.V.z) / (hs || 1);
+    if (Math.abs(S.V.y) < 4 && hs > 7 && ahead > 0) {
+      // PERFECT RELEASE: let go near the top of the forward arc
+      S.V.x *= 1.25; S.V.z *= 1.25; S.V.y = Math.max(S.V.y, 0) + 5;
+      S.score += 50; toast('PERFECT RELEASE  +50'); Audio.perfect(); buzz(h, 0.75, 70);
+    } else {
+      if (S.V.y > 0) S.V.y += 1.5;
+      Audio.release(h.handed === 'left' ? -0.6 : 0.6);
+    }
   }
   h.rope = null; h.pending = null;
 }
@@ -883,13 +994,74 @@ function startFlip() {
   toast(S.flips > 1 ? `FLIP x${S.flips}  +${pts}` : `FLIP  +${pts}`);
   for (const h of hands) buzz(h, 0.35, 110);
 }
-function jumpOrFlip() { if (S.grounded) { S.V.y = 9; S.grounded = false; } else startFlip(); }
+// ZIP: pull straight to the point you aim at. Aim at a wall near its top and you vault onto the roof.
+function zip(h) {
+  if (S.zip) return;
+  const hit = raycastCity(h.origin, h.dir, WEB_RANGE);
+  if (!hit) { if (S.grounded) { S.V.y = 9; S.grounded = false; } else Audio.miss && Audio.miss(); return; }
+  for (const o of hands) letGo(o, false);
+  let target = hit.p.clone(), land = null;
+  if (hit.n.y > 0.5) { land = hit.p.clone(); target = hit.p.clone().add(_a.set(0, 0.6, 0)); }
+  else if (hit.b && hit.b.h - hit.p.y < 30) {
+    land = new V3(hit.p.x - hit.n.x * 1.5, hit.b.h, hit.p.z - hit.n.z * 1.5);
+    target = new V3(hit.p.x + hit.n.x * 0.3, hit.b.h + 0.8, hit.p.z + hit.n.z * 0.3);
+  }
+  Audio.thwip(h.handed === 'left' ? -0.6 : 0.6); buzz(h, 0.3, 30);
+  const w = freeWeb(); h.web = w; w.shoot(h.origin, target, true);
+  h.pending = { zip: true, p: target, n: hit.n, target, land };
+  if (!demo) hideIntro();
+}
+function wallJump() {
+  const w = S.wall; if (!w) return;
+  const look = headForwardFlat(_c);
+  S.V.copy(w.n).multiplyScalar(9).addScaledVector(look, 6); S.V.y = 9; S.wall = null; Audio.release(0); toast('WALL JUMP');
+}
+function zipHand() { return hands.find((h) => h.src && h.handed === 'right') || hands[1]; }
 function headForwardFlat(out) { camera.getWorldDirection(out); out.y = 0; if (out.lengthSq() < 1e-4) out.set(-Math.sin(S.yaw), 0, -Math.cos(S.yaw)); return out.normalize(); }
 
 // ---- physics: true pendulum. The web holds you at a fixed length; gravity does the swinging.
 function physics(dt) {
   const P = S.P, V = S.V; S.prevY = P.y;
+  // ---- zip pull
+  if (S.zip) {
+    const z = S.zip; z.t += dt;
+    const to = _c.set(z.target.x - P.x, z.target.y - (P.y + 1.3), z.target.z - P.z); const dist = to.length(); to.divideScalar(dist || 1);
+    const k = Math.min(1, dt * 9); V.x += (to.x * 42 - V.x) * k; V.y += (to.y * 42 - V.y) * k; V.z += (to.z * 42 - V.z) * k;
+    P.addScaledVector(V, dt);
+    if (dist < 2.2 || z.t > 3) {
+      if (z.land) { P.copy(z.land); V.set(to.x * 3, 2, to.z * 3); S.grounded = true; toast('LEDGE'); }
+      else { V.multiplyScalar(0.35); V.y = Math.max(V.y, 6); }
+      Audio.land(0.2); letGo(z.h, false); S.zip = null;
+    }
+    return;
+  }
+  // ---- wall run
+  if (S.wall) {
+    const w = S.wall; w.t += dt;
+    const n = w.n, vn = V.dot(n); V.addScaledVector(n, -vn);
+    const look = camera.getWorldDirection(_c);
+    const up = clamp(look.y * 1.6, -0.2, 1);
+    const tang = _d.set(V.x, 0, V.z); const ts = tang.length();
+    V.y += (up * 9 - V.y) * Math.min(1, dt * 3);
+    if (ts > 0.1) tang.multiplyScalar(Math.max(ts - 1.5 * dt, 0) / ts); V.x = tang.x; V.z = tang.z;
+    P.addScaledVector(V, dt);
+    // stay glued to the face
+    const b = w.b, R = 0.36;
+    if (w.k === 0) P.x = b.minX - R; else if (w.k === 1) P.x = b.maxX + R; else if (w.k === 2) P.z = b.minZ - R; else P.z = b.maxZ + R;
+    S.stepT -= dt; if (S.stepT <= 0) { S.stepT = 0.26; Audio.step(); for (const h of hands) buzz(h, 0.15, 25); }
+    const along = (w.k < 2) ? (P.z < b.minZ - 0.5 || P.z > b.maxZ + 0.5) : (P.x < b.minX - 0.5 || P.x > b.maxX + 0.5);
+    if (P.y >= b.h - 0.3) { P.y = b.h; V.y = 5; V.addScaledVector(n, -3); S.wall = null; toast('VAULT'); return; }
+    if (along || w.t > 3.5 || (ts < 2 && Math.abs(V.y) < 1.5) || P.y < 0.2) { V.addScaledVector(n, 3); S.wall = null; }
+    S.grounded = false;
+    return;
+  }
   V.y -= GRAV * dt;
+  // ---- dive: look straight down while falling with no web to pick up speed
+  S.diving = false;
+  if (!S.grounded && !hands.some((h) => h.rope) && V.y < 0) {
+    const look = camera.getWorldDirection(_c);
+    if (look.y < -0.6) { S.diving = true; V.addScaledVector(look, 13 * dt); }
+  }
   const fwd = headForwardFlat(_a), right = _b.crossVectors(fwd, UP).normalize(), mx = S.move.x, my = S.move.y;
   if (S.grounded) {
     const tx = (fwd.x * -my + right.x * mx) * RUN, tz = (fwd.z * -my + right.z * mx) * RUN, k = Math.min(1, dt * 10);
@@ -903,7 +1075,7 @@ function physics(dt) {
     // pumping: a little energy injected at the bottom of the arc keeps chains of swings going
     if (dy / dist > 0.75) { const hs = Math.hypot(V.x, V.z); if (hs > 2) { V.x += V.x / hs * 3.2 * dt; V.z += V.z / hs * 3.2 * dt; } }
   }
-  const sp = V.length(); V.multiplyScalar(1 - Math.min(0.2, 0.0011 * sp * dt * 10));
+  const sp = V.length(); V.multiplyScalar(1 - Math.min(0.2, (S.diving ? 0.0004 : 0.0011) * sp * dt * 10));
   if (sp > MAXS) V.setLength(MAXS);
   P.addScaledVector(V, dt);
   // soft-elastic rope constraint (webs stretch slightly)
@@ -925,6 +1097,12 @@ function physics(dt) {
     if (P.x < b.minX - R || P.x > b.maxX + R || P.z < b.minZ - R || P.z > b.maxZ + R) continue;
     if (S.prevY >= b.h - 0.35 || b.h - P.y < 0.5) { P.y = b.h; if (V.y < 0) V.y = 0; S.grounded = true; continue; }
     const pen = [P.x - (b.minX - R), (b.maxX + R) - P.x, P.z - (b.minZ - R), (b.maxZ + R) - P.z], k = pen.indexOf(Math.min(...pen));
+    // fast into a wall with no web attached: start a wall run
+    const hsp = Math.hypot(V.x, V.z);
+    if (!S.wall && !hands.some((h) => h.rope) && hsp > 9 && P.y > 2 && b.h - P.y > 4) {
+      const n = new V3(k === 0 ? -1 : k === 1 ? 1 : 0, 0, k === 2 ? -1 : k === 3 ? 1 : 0);
+      S.wall = { b, k, n, t: 0 }; V.y = Math.max(V.y, 3); S.stepT = 0; toast('WALL RUN'); Audio.land(0.3);
+    }
     if (k === 0) { P.x = b.minX - R; V.x = Math.min(V.x, 0) * 0.2; } else if (k === 1) { P.x = b.maxX + R; V.x = Math.max(V.x, 0) * 0.2; }
     else if (k === 2) { P.z = b.minZ - R; V.z = Math.min(V.z, 0) * 0.2; } else { P.z = b.maxZ + R; V.z = Math.max(V.z, 0) * 0.2; }
   }
@@ -967,7 +1145,7 @@ function pollXR() {
     if (trig && !p.trig) shoot(h);
     if (!trig && p.trig) letGo(h, true);
     if (h.rope) h.rope.climb = grip;
-    if (ax && !p.ax) jumpOrFlip();
+    if (ax && !p.ax) { if (S.wall) wallJump(); else zip(h); }
     // back to the roof only on a deliberate 1.5 s hold of the LEFT stick click
     if (stick && h.handed === 'left') {
       p.holdT = (p.holdT || 0) + 1 / 72;
@@ -987,7 +1165,7 @@ function pollXR() {
 const keys = {}; let demo = true, lastInput = 0, touches = 0, lastTouch = null;
 const cv = renderer.domElement;
 function takeControl() { if (demo) { demo = false; document.getElementById('demo').style.display = 'none'; respawn(); } lastInput = realTime; }
-addEventListener('keydown', (e) => { takeControl(); keys[e.code] = true; if (e.code === 'Space') { jumpOrFlip(); e.preventDefault(); } if (e.code === 'KeyR') respawn(); });
+addEventListener('keydown', (e) => { takeControl(); keys[e.code] = true; if (e.code === 'Space') { if (S.wall) wallJump(); else { desktopHands(); zip(hands[1]); } e.preventDefault(); } if (e.code === 'KeyR') respawn(); });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 cv.addEventListener('contextmenu', (e) => e.preventDefault());
 const lockPointer = () => { try { const r = cv.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (_) {} };
@@ -1041,7 +1219,6 @@ function demoAI(dt) {
       h.dir.set(side * 0.55, 1.15, D.dir * 1.0).normalize();
       shoot(h); D.hand = 1 - D.hand;
     }
-    if (V.y > 7 && Math.random() < 0.008) startFlip();
   } else if (cur.rope) {
     const ahead = (P.z - cur.rope.A.z) * D.dir;
     cur.rope.climb = P.y < 25;
@@ -1056,15 +1233,21 @@ function demoAI(dt) {
 function updateHands(dt) {
   const xr = renderer.xr.isPresenting;
   for (const h of hands) {
-    if (xr && h.src) { h.ctrl.getWorldPosition(h.origin); h.dir.set(0, 0, -1).applyQuaternion(h.ctrl.getWorldQuaternion(_q2)); }
+    if (xr && h.src) {
+      h.dir.set(0, 0, -1).applyQuaternion(h.ctrl.getWorldQuaternion(_q2));
+      if (h.glove) { h.glove.nozzle.getWorldPosition(h.origin); const tv = h.src.gamepad ? h.src.gamepad.buttons[0].value : 1; h.glove.index.visible = tv > 0.2; h.glove.point.visible = tv <= 0.2; }
+      else h.ctrl.getWorldPosition(h.origin);
+    }
     // reticle + aim line: GREEN = a web will stick there, RED = out of reach / nothing to grab
     const show = (xr && h.src && !h.rope && !(h.web && h.web.state === 'flying')) || (!xr && !demo && !h.rope && h.i === 1);
     if (show) {
-      const hit = findAnchor(h);
+      const dr = droneInSights(h);
+      const hit = dr ? null : findAnchor(h);
       let target, ok = !!hit;
-      if (hit) target = hit.p;
+      if (dr) { target = dr.d.pos; ok = true; }
+      else if (hit) target = hit.p;
       else { const any = raycastCity(h.origin, h.dir, 400); target = any ? any.p : _a.copy(h.origin).addScaledVector(h.dir, WEB_RANGE); }
-      const col = ok ? OK_COL : NO_COL, dist = h.origin.distanceTo(target);
+      const col = dr ? DRONE_COL : ok ? OK_COL : NO_COL, dist = h.origin.distanceTo(target);
       h.reticle.visible = true; h.reticle.position.copy(target); h.reticle.material.color.copy(col);
       h.reticle.scale.setScalar(clamp(dist * 0.03, 0.15, 5) * (ok ? 1 : 0.7));
       if (xr) {
@@ -1159,6 +1342,7 @@ renderer.setAnimationLoop((tms) => {
   if (!xr) desktopHands();
   updateHands(gdt);
   updateWorld(dt, gdt);
+  updateDrones(gdt);
   updateSpeedFx(dt);
   dust.update(gdt);
   updateFx(dt);
@@ -1166,7 +1350,7 @@ renderer.setAnimationLoop((tms) => {
   if (hudTimer <= 0) {
     hudTimer = 0.15;
     if (xr) drawWrist();
-    else hud2d.innerHTML = `<b>${Math.round(S.speed * 3.6)}</b> km/h &nbsp; ${Math.round(S.P.y)} m &nbsp; score ${S.score}${S.slow ? ' &nbsp; SLOW-MO' : ''}`;
+    else hud2d.innerHTML = `<b>${Math.round(S.speed * 3.6)}</b> km/h &nbsp; ${Math.round(S.P.y)} m &nbsp; score ${S.score} &nbsp; drones ${S.drones}/${DRONE_N}${S.slow ? ' &nbsp; SLOW-MO' : ''}`;
   }
   renderer.render(scene, camera);
 });
