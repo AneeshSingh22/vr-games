@@ -2,6 +2,7 @@
 
 WebXR games for Meta Quest, playable in the Quest Browser.
 
+- `colossus/` – you are a stone giant fighting off soldiers on grappling rigs
 - `skyline-swing/` – web-swinging through a Manhattan-style city
 - `juice-dojo/` – fruit slicing with katanas
 - `neon-swing/` – older neon version of the swing game
