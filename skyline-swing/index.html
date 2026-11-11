@@ -40,7 +40,7 @@
   <button id="closeInfo" aria-label="Close">×</button>
   <h1>SKYLINE SWING</h1>
   <p>On your Quest: open this page in the <b>Meta Quest Browser</b>, press <b>ENTER VR</b>, and step off the roof.</p>
-  <p class="dim"><b>Computer:</b> click to play · mouse aims · left-click = right web · right-click = left web (hold to swing) · Shift = climb · WASD steer · Space = zip · E = sticky web (hold in the air for bullet time) · C = car chase · Esc then ⚙ = settings<br>
+  <p class="dim"><b>Computer:</b> click to play · mouse aims · left-click = right web · right-click = left web (hold to swing) · Shift = climb · WASD steer · Space = zip (again to cancel) · E = sticky web (hold in the air for bullet time + rapid fire) · C = car chase · Esc then ⚙ = settings<br>
   <b>Phone:</b> hold to swing, drag to look.</p>
 </div>
 <button id="gear" aria-label="Settings">&#9881;</button>
@@ -60,7 +60,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const UP = new V3(0, 1, 0);
 const FONT = '-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
-const _a = new V3(), _b = new V3(), _c = new V3(), _d = new V3(), _e = new V3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4();
+const _a = new V3(), _b = new V3(), _c = new V3(), _d = new V3(), _e = new V3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _f = new V3();
 const _col = new THREE.Color();
 let seedN = 20241; const srand = () => { seedN = (seedN * 16807) % 2147483647; return (seedN - 1) / 2147483646; };
 const srange = (a, b) => a + srand() * (b - a);
@@ -263,8 +263,8 @@ const facadeMat = new THREE.ShaderMaterial({
       vec3 V=normalize(vW-cameraPosition);
       float ndl=max(dot(n,uSun),0.0);
       float street=smoothstep(0.0,70.0,y);
-      vec3 amb=mix(uGroundCol,uSkyCol,n.y*0.5+0.5)*mix(0.5,1.0,street);
-      vec3 L=amb + uSunCol*ndl*mix(0.2,1.0,smoothstep(5.0,85.0,y));
+      vec3 amb=mix(uGroundCol,uSkyCol,n.y*0.5+0.5)*mix(0.5,1.0,street)*mix(1.0,0.3,uNight);
+      vec3 L=amb + uSunCol*ndl*mix(0.2,1.0,smoothstep(5.0,85.0,y))*mix(1.0,0.4,uNight);
       vec3 col;
       if(n.y>0.5){
         vec3 roof=mix(vec3(0.16,0.155,0.15), vec3(0.25,0.24,0.23), h21(floor(vW.xz/1.5)+s*9.0));
@@ -325,15 +325,17 @@ const facadeMat = new THREE.ShaderMaterial({
         // night: lit windows, shop fronts and street-lamp spill
         float litN = step(0.6, h21(id*1.37 + vec2(s*5.1, side*2.3)));
         vec3 warmL = mix(vec3(1.0,0.7,0.4), vec3(0.75,0.85,1.0), step(0.78, h21(id + s*3.0)));
-        col += warmL*1.5*win*litN*uNight;
-        if(vBase<0.5) col += vec3(1.0,0.72,0.45)*0.9*(1.0-smoothstep(4.6,5.0,y))*uNight;
-        col += vec3(1.0,0.7,0.4)*0.22*uNight*(1.0-smoothstep(0.0,14.0,y));
+        col += warmL*1.5*win*litN*uNight*mix(1.0, 0.35, smoothstep(0.05, 0.3, max(fw.x,fw.y)));
+        if(vBase<0.5){ float shopId=floor(u/7.0); float on=step(0.35,h21(vec2(shopId,s+4.0))); float win2=smoothstep(0.6,0.75,y)*(1.0-smoothstep(3.6,3.75,y))*step(0.08,fract(u/7.0))*(1.0-step(0.85,fract(u/7.0)));
+          vec3 shopC=mix(vec3(1.0,0.78,0.5), vec3(0.85,0.92,1.0), step(0.7,h21(vec2(shopId,s+7.0))));
+          col += shopC*0.45*win2*on*uNight; }
+        col += vec3(1.0,0.7,0.4)*0.07*uNight*(1.0-smoothstep(0.0,10.0,y));
         // far: average to stop shimmer
         float far = smoothstep(0.14, 0.5, max(fw.x,fw.y));
         float wf = (wb.x-wa.x)*(wb.y-wa.y);
-        vec3 avg = mix(wall*L, mix(vec3(0.08)*(1.0-0.85*uNight), refl*gtint, rk), wf);
+        vec3 avg = mix(wall*L*(1.0-0.4*uNight), mix(vec3(0.08)*(1.0-0.85*uNight), refl*gtint, rk), wf);
         if(glassy>0.5) avg = refl*gtint*rk + vec3(0.03);
-        avg += vec3(1.0,0.74,0.48)*0.035*wf*uNight*(0.3+1.4*h21(vec2(s,31.0)));
+        avg += vec3(1.0,0.74,0.48)*0.05*wf*uNight*(0.3+1.4*h21(vec2(s,31.0)));
         col = mix(col, avg, far);
         // ground contact darkening
         col *= mix(0.55, 1.0, smoothstep(vBase, vBase+5.0, y));
@@ -394,6 +396,7 @@ instanced(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new THREE.MeshSta
 }
 
 // ============================================================ streets, park, rivers, far shores
+var groundMat = null, farMat = null;
 const PXM = 4; // px per metre in the tile texture
 const roadTex = makeTex(AVP * PXM, STP * PXM, (g, W, H) => {
   const m = (v) => v * PXM;
@@ -426,7 +429,8 @@ const roadTex = makeTex(AVP * PXM, STP * PXM, (g, W, H) => {
 });
 roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping; roadTex.repeat.set(2 * IX + 1, 2 * JZ + 1);
 {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY_X * 2, CITY_Z * 2).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.95 }));
+  groundMat = new THREE.MeshStandardMaterial({ map: roadTex, emissiveMap: roadTex, emissive: new THREE.Color('#ffcf99'), emissiveIntensity: 0, roughness: 0.95 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY_X * 2, CITY_Z * 2).rotateX(-Math.PI / 2), groundMat);
   scene.add(ground);
   const beyond = new THREE.Mesh(new THREE.PlaneGeometry(14000, 14000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#5a5a58', roughness: 1 }));
   beyond.position.y = -1.5; scene.add(beyond);
@@ -440,7 +444,11 @@ roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping; roadTex.repeat.set(2 * IX 
   const far = [];
   for (const s of [-1, 1]) for (let k = 0; k < 260; k++) far.push([s * rand(CITY_X + 1350, CITY_X + 2600), rand(-3500, 3500), rand(12, 60), rand(10, 70), rand(15, 140)]);
   for (let k = 0; k < 200; k++) far.push([rand(-1800, 1800), (Math.random() < 0.5 ? -1 : 1) * rand(CITY_Z + 400, CITY_Z + 2500), rand(15, 60), rand(15, 60), rand(10, 90)]);
-  instanced(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ roughness: 0.9 }), far, (f, i, im) => {
+  // speckle of lit windows for the far shores at night
+  const farWin = makeTex(128, 256, (g, w, h) => { g.fillStyle = '#000'; g.fillRect(0, 0, w, h); for (let y = 2; y < h; y += 6) for (let x = 2; x < w; x += 5) if (Math.random() < 0.3) { g.fillStyle = Math.random() < 0.8 ? '#ffd29a' : '#cfe0ff'; g.fillRect(x, y, 2, 3); } });
+  farWin.wrapS = farWin.wrapT = THREE.RepeatWrapping; farWin.repeat.set(2, 3);
+  farMat = new THREE.MeshStandardMaterial({ roughness: 0.9, emissiveMap: farWin, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0 });
+  instanced(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), farMat, far, (f, i, im) => {
     _m.compose(new V3(f[0], 0, f[1]), qI, new V3(f[2], f[4], f[3])); im.setMatrixAt(i, _m); im.setColorAt(i, _col.set(spick(['#8c8a86', '#7b7f86', '#9a8f80', '#6f7378'])));
   });
   // park
@@ -923,14 +931,14 @@ const intro = makePanel(1024, 560, 2.4);
 {
   const { g, w, h } = intro; roundRect(g, 8, 8, w - 16, h - 16, 26); g.fillStyle = 'rgba(14,16,20,.8)'; g.fill();
   g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = `800 84px ${FONT}`; g.fillText('SKYLINE SWING', w / 2, 120);
-  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release · web drones!'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'ZIP to where you point · aim at a roof edge to vault up'], ['B / Y', 'STICKY WEB: stops people, cars, birds · hold in the air = bullet time'], ['MENU', 'click the left stick: settings, car chase, back to the roof']];
+  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release · web drones!'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'ZIP where you point · press again mid-zip to cancel & keep the speed'], ['B / Y', 'STICKY WEB fires where you point · hold in the air = bullet time + rapid fire'], ['MENU', 'click the left stick: settings, car chase, back to the roof']];
   lines.forEach(([k, v], i) => { const y = 215 + i * 62; g.textAlign = 'right'; g.font = `800 34px ${FONT}`; g.fillStyle = '#ffd27a'; g.fillText(k, 250, y); g.textAlign = 'left'; g.font = `500 28px ${FONT}`; g.fillStyle = '#fff'; g.fillText(v, 275, y, w - 300); });
   g.textAlign = 'center'; g.font = `600 24px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('Let go at the top of a swing for a boost · look down to dive · hit walls fast to run on them · web the drones', w / 2, 525);
   intro.tex.needsUpdate = true; scene.add(intro.mesh);
 }
 
 // ============================================================ player
-const GRAV = 17, AIR_ACC = 6, RUN = 8, MAXS = 75, WEB_RANGE = 150;
+const GRAV = 16, AIR_ACC = 9, RUN = 8, MAXS = 75, WEB_RANGE = 150;
 const S = { P: new V3(), V: new V3(), yaw: 0, pitch: 0, roll: 0, grounded: false, prevY: 0, flipT: -1, flipDir: 1, flips: 0,
   slow: false, meter: 1, score: 0, speed: 0, blazing: false, move: new THREE.Vector2(), timeScale: 1, zip: null, wall: null, diving: false, drones: 0, stepT: 0 };
 // pick a spawn rooftop: a tall prewar setback near midtown with a big roof
@@ -1036,8 +1044,16 @@ function onAttach(h) {
   if (S.grounded || spd < 9) {
     const to = _b.subVectors(hit.p, chest).normalize();
     S.grounded = false; S.P.y += 0.05;
-    S.V.addScaledVector(to, clamp(dist0 * 0.22, 9, 18)); S.V.y += 5;
-    h.rope.L = dist0 * 0.82; h.rope.launch = 0.6;
+    S.V.addScaledVector(to, clamp(dist0 * 0.28, 12, 24)); S.V.y += 7;
+    h.rope.L = dist0 * 0.8; h.rope.launch = 0.7;
+  } else if (!hit.heli) {
+    // already flying: keep all your speed (no snap when the web goes taut) and add a kick along the aim
+    const fl = _b.set(hit.p.x - S.P.x, 0, hit.p.z - S.P.z); if (fl.lengthSq() > 1) { fl.normalize(); S.V.addScaledVector(fl, 5); }
+    if (S.V.y < -6) S.V.y *= 0.6;
+    // redirect speed along the arc instead of losing the part that points away from the anchor
+    const sp0 = S.V.length(), rn = _b.subVectors(chest, hit.p).normalize(), vr = S.V.dot(rn);
+    if (vr > 0) { S.V.addScaledVector(rn, -vr); if (S.V.lengthSq() > 1e-4) S.V.setLength(sp0); }
+    h.rope.L = dist0 * 0.995;
   }
 }
 function letGo(h, flick) {
@@ -1047,10 +1063,11 @@ function letGo(h, flick) {
     const ahead = ((S.P.x - r.A.x) * S.V.x + (S.P.z - r.A.z) * S.V.z) / (hs || 1);
     if (Math.abs(S.V.y) < 4 && hs > 7 && ahead > 0) {
       // PERFECT RELEASE: let go near the top of the forward arc
-      S.V.x *= 1.25; S.V.z *= 1.25; S.V.y = Math.max(S.V.y, 0) + 5;
+      S.V.x *= 1.3; S.V.z *= 1.3; S.V.y = Math.max(S.V.y, 0) + 7;
       S.score += 50; toast('PERFECT RELEASE  +50'); Audio.perfect(); buzz(h, 0.75, 70);
     } else {
-      if (S.V.y > 0) S.V.y += 1.5;
+      const hs2 = Math.hypot(S.V.x, S.V.z); if (hs2 > 4) { S.V.x *= 1.08; S.V.z *= 1.08; }
+      S.V.y = Math.max(S.V.y, -2) + 3.5;
       Audio.release(h.handed === 'left' ? -0.6 : 0.6);
     }
   }
@@ -1083,6 +1100,15 @@ function zip(h) {
   h.pending = { zip: true, p: target, n: hit.n, target, land };
   if (!demo) hideIntro();
 }
+function zipPending() { return hands.some((h) => h.pending && h.pending.zip); }
+function cancelZip() {
+  for (const h of hands) if (h.pending && h.pending.zip) { if (h.web) { h.web.release(); h.web = null; } h.pending = null; }
+  if (!S.zip) return;
+  const h = S.zip.h; S.zip = null; if (h.web) { h.web.release(); h.web = null; } h.pending = null;
+  // keep the zip's speed as a launch: a little lift so you can fire your next web
+  S.V.multiplyScalar(0.95); S.V.y = Math.max(S.V.y, 0) + 4; S.grounded = false;
+  toast('ZIP CANCEL', '#ffffff', 0.06); Audio.release(0); for (const o of hands) buzz(o, 0.4, 40);
+}
 function wallJump() {
   const w = S.wall; if (!w) return;
   const look = headForwardFlat(_c);
@@ -1092,6 +1118,8 @@ function zipHand() { return hands.find((h) => h.src && h.handed === 'right') || 
 function headForwardFlat(out) { camera.getWorldDirection(out); out.y = 0; if (out.lengthSq() < 1e-4) out.set(-Math.sin(S.yaw), 0, -Math.cos(S.yaw)); return out.normalize(); }
 
 // ---- physics: true pendulum. The web holds you at a fixed length; gravity does the swinging.
+// height of the roof or street directly under a point (cheap: uses the building grid)
+function groundBelow(P) { let g = 0; for (const b of nearby(P.x, P.z)) if (P.x > b.minX && P.x < b.maxX && P.z > b.minZ && P.z < b.maxZ && b.h <= P.y + 0.5 && b.h > g) g = b.h; return g; }
 function physics(dt) {
   const P = S.P, V = S.V; S.prevY = P.y;
   // ---- zip pull
@@ -1146,9 +1174,11 @@ function physics(dt) {
     if (r.climb) { r.L = Math.max(4, r.L - 9 * dt); }
     if (r.launch > 0) { r.launch -= dt; r.L = Math.max(4, r.L - 6 * dt); }
     // pumping: a little energy injected at the bottom of the arc keeps chains of swings going
-    if (dy / dist > 0.75) { const hs = Math.hypot(V.x, V.z); if (hs > 2) { V.x += V.x / hs * 3.2 * dt; V.z += V.z / hs * 3.2 * dt; } }
+    { const hs = Math.hypot(V.x, V.z), below = dy / dist; if (hs > 2 && below > 0.2) { const k = (below > 0.75 ? 11 : 6) * dt; V.x += V.x / hs * k; V.z += V.z / hs * k; } }
+    // street clearance: shorten the web so the bottom of the arc stays ~4 m above whatever is under you
+    if (!r.climb && !r.heli) { const floorY = groundBelow(P) + 4.0, maxL = r.A.y - floorY; if (maxL > 6 && r.L > maxL) r.L = Math.max(maxL, r.L - 14 * dt); }
   }
-  const sp = V.length(); V.multiplyScalar(1 - Math.min(0.2, (S.diving ? 0.0004 : 0.0011) * sp * dt * 10));
+  const sp = V.length(); V.multiplyScalar(1 - Math.min(0.2, (S.diving ? 0.00015 : 0.00032) * sp * dt * 10));
   if (sp > MAXS) V.setLength(MAXS);
   P.addScaledVector(V, dt);
   // soft-elastic rope constraint (webs stretch slightly)
@@ -1217,17 +1247,24 @@ function pollXR() {
     const trig = b(0), grip = b(1), stick = b(3), ax = b(4), by = b(5);
     if (stick && !p.stick && h.handed === 'left') toggleMenu(!menuOpen);
     if (menuOpen) {
-      const row = menuRowAt(h); if (h.handed === 'right' || menuHover < 0) { if (row !== menuHover) { menuHover = row; drawMenu(); } }
-      if (trig && !p.trig) { const r2 = menuRowAt(h); if (r2 >= 0) menuActivate(r2); }
+      const row = menuRowAt(h);
+      if (row >= 0 && row !== p.menuRow && row !== menuHover) { menuHover = row; drawMenu(); buzz(h, 0.15, 15); }
+      p.menuRow = row;
+      const sy = gp.axes[3] || 0;
+      if (Math.abs(sy) > 0.7 && !p.navved) { menuHover = clamp((menuHover < 0 ? 0 : menuHover) + (sy > 0 ? 1 : -1), 0, MENU_ROWS.length - 1); drawMenu(); buzz(h, 0.15, 15); p.navved = true; }
+      else if (Math.abs(sy) < 0.3) p.navved = false;
+      if ((trig && !p.trig) || (ax && !p.ax)) { const r2 = (trig && row >= 0) ? row : menuHover; if (r2 >= 0) { menuHover = r2; menuActivate(r2); buzz(h, 0.4, 30); } }
+      if (by && !p.by) toggleMenu(false);
       Object.assign(p, { trig, grip, stick, ax, by }); continue;
     }
     if (trig && !p.trig) { const fwdSpeed = (h.handVel || _e.set(0, 0, 0)).dot(h.dir); h.boost = fwdSpeed > 1.6 ? 1.35 : 1; shoot(h); h.boost = 1; }
     if (!trig && p.trig) letGo(h, true);
     if (h.rope) h.rope.climb = grip;
-    if (ax && !p.ax) { if (S.wall) wallJump(); else zip(h); }
+    if (ax && !p.ax) { if (S.zip || zipPending()) cancelZip(); else if (S.wall) wallJump(); else zip(h); }
     // B / Y: sticky web. Tap to fire; in the air, hold for bullet time while you aim, release to fire.
-    if (by && !p.by) { if (!S.grounded && S.meter > 0.05) S.aimSticky = h; else fireSticky(h); }
-    if (!by && p.by && S.aimSticky === h) { fireSticky(h); S.aimSticky = null; }
+    if (by && !p.by) { fireSticky(h); h.stickyNext = realTime + 0.45; if (!S.grounded && S.meter > 0.05) S.aimSticky = h; }
+    if (by && S.aimSticky === h && realTime > h.stickyNext) { fireSticky(h); h.stickyNext = realTime + 0.45; }
+    if (!by && S.aimSticky === h) S.aimSticky = null;
     if (S.aimSticky === h) slowHeld = true;
     const x = gp.axes[2] || 0, y = gp.axes[3] || 0;
     if (h.handed === 'left') S.move.set(Math.abs(x) > 0.15 ? x : 0, Math.abs(y) > 0.15 ? y : 0);
@@ -1245,12 +1282,12 @@ function takeControl() { if (demo) { demo = false; document.getElementById('demo
 addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'SELECT') return;
   takeControl(); if (keys[e.code]) return; keys[e.code] = true;
-  if (e.code === 'Space') { if (S.wall) wallJump(); else { desktopHands(); zip(hands[1]); } e.preventDefault(); }
+  if (e.code === 'Space') { if (S.zip || zipPending()) cancelZip(); else if (S.wall) wallJump(); else { desktopHands(); zip(hands[1]); } e.preventDefault(); }
   if (e.code === 'KeyR') respawn();
   if (e.code === 'KeyC') startChase();
-  if (e.code === 'KeyE') { desktopHands(); if (!S.grounded && S.meter > 0.05) S.aimSticky = hands[1]; else fireSticky(hands[1]); }
+  if (e.code === 'KeyE') { desktopHands(); fireSticky(hands[1]); hands[1].stickyNext = realTime + 0.45; if (!S.grounded && S.meter > 0.05) S.aimSticky = hands[1]; }
 });
-addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'KeyE' && S.aimSticky) { desktopHands(); fireSticky(S.aimSticky); S.aimSticky = null; } });
+addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'KeyE') S.aimSticky = null; });
 cv.addEventListener('contextmenu', (e) => e.preventDefault());
 const lockPointer = () => { try { const r = cv.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (_) {} };
 cv.addEventListener('pointerdown', (e) => {
@@ -1284,6 +1321,7 @@ function desktopHands() {
 function pollDesktop() {
   S.move.set((keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0));
   for (const h of hands) if (h.rope) h.rope.climb = !!(keys.ShiftLeft || keys.ShiftRight);
+  if (S.aimSticky && realTime > S.aimSticky.stickyNext) { desktopHands(); fireSticky(S.aimSticky); S.aimSticky.stickyNext = realTime + 0.45; }
   return !!S.aimSticky;
 }
 // demo: swings down the avenues with alternating hands, like you would
@@ -1338,7 +1376,12 @@ function updateHands(dt) {
     }
     // reticle + aim line: GREEN = a web will stick there, RED = out of reach / nothing to grab
     const show = !menuOpen && ((xr && h.src && !h.rope && !(h.web && h.web.state === 'flying')) || (!xr && !demo && !h.rope && h.i === 1));
-    if (show) {
+    if (show && S.aimSticky === h) {
+      const aim = stickyAim(h, _f); const dist = h.origin.distanceTo(aim.p);
+      h.reticle.visible = true; h.reticle.position.copy(aim.p); h.reticle.material.color.copy(DRONE_COL);
+      h.reticle.scale.setScalar(clamp(dist * 0.03, 0.15, 5) * (aim.locked ? 1.3 : 0.8));
+      if (xr) { const dvec = _b.subVectors(aim.p, h.origin).normalize(); h.aimLine.visible = true; h.aimLine.position.copy(h.origin); h.aimLine.quaternion.setFromUnitVectors(UP, dvec); h.aimLine.scale.set(0.006, dist, 0.006); h.aimLine.material.color.copy(DRONE_COL); h.aimLine.material.opacity = 0.6; }
+    } else if (show) {
       const dr = droneInSights(h);
       const hit = dr ? null : findAnchor(h);
       let target, ok = !!hit;
@@ -1353,6 +1396,9 @@ function updateHands(dt) {
         h.aimLine.visible = true; h.aimLine.position.copy(h.origin); h.aimLine.quaternion.setFromUnitVectors(UP, dvec);
         h.aimLine.scale.set(0.004, len, 0.004); h.aimLine.material.color.copy(col); h.aimLine.material.opacity = ok ? 0.35 : 0.2;
       } else h.aimLine.visible = false;
+    } else if (menuOpen && xr && h.src) {
+      h.reticle.visible = false; h.aimLine.visible = true; h.aimLine.position.copy(h.origin); h.aimLine.quaternion.setFromUnitVectors(UP, h.dir);
+      h.aimLine.scale.set(0.004, 1.6, 0.004); h.aimLine.material.color.set('#ffffff'); h.aimLine.material.opacity = 0.6;
     } else { h.reticle.visible = false; h.aimLine.visible = false; }
     if (h.web) {
       const ev = h.web.update(dt, h.origin, h.rope ? h.rope.L : (h.pending ? h.origin.distanceTo(h.pending.p) : 1));
@@ -1451,6 +1497,11 @@ function glowPoints(pos, size, color) {
   p.frustumCulled = false; scene.add(p); return p;
 }
 const lampGlow = glowPoints(new Float32Array(lampGlowPos), 3.2, '#ffc27a');
+// pools of warm light on the street under each lamp (night only)
+const poolTex = makeTex(128, 128, (g) => { const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.45, 'rgba(255,255,255,.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); });
+const lampPools = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: poolTex, color: '#ffb366', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4 }), lampGlowPos.length / 3);
+for (let i = 0; i < lampGlowPos.length / 3; i++) { const x = lampGlowPos[i * 3], z = lampGlowPos[i * 3 + 2]; _m.compose(_a.set(x + (x % 2 ? 0 : 0), 0.06, z), _q.identity(), _b.set(26, 1, 26)); lampPools.setMatrixAt(i, _m); }
+lampPools.frustumCulled = false; lampPools.visible = false; scene.add(lampPools);
 const headPos = new Float32Array(CARS * 3), tailPos = new Float32Array(CARS * 3);
 const headLights = glowPoints(headPos, 1.6, '#fff6e0'), tailLights = glowPoints(tailPos, 1.2, '#ff2a1a');
 // rain
@@ -1470,14 +1521,16 @@ function updateEnvironment(dt) {
   _c1.copy(HOR.day).lerp(HOR.gold, gold).lerp(HOR.night, night).lerp(_c2.copy(HOR.rain).multiplyScalar(0.12 + 0.88 * dayK), rainK * 0.85); skyU.uHor.value.copy(_c1);
   FOG.copy(_c1).multiplyScalar(0.92); scene.fog.color.copy(FOG); scene.fog.density = 0.0006 + rainK * 0.0011; cityU.uFogD.value = scene.fog.density;
   if (dayK > 0.15) { LIGHT_DIR.copy(SUN); SUN_COL.setRGB(1.0, 0.86 - 0.25 * gold, 0.68 - 0.35 * gold).multiplyScalar(1.6 * dayK * (1 - 0.65 * rainK)); }
-  else { LIGHT_DIR.copy(MOON); SUN_COL.setRGB(0.09, 0.11, 0.18).multiplyScalar((1 - dayK) * (1 - 0.5 * rainK)); }
-  SKY_AMB.setRGB(0.36, 0.45, 0.6).multiplyScalar(0.08 + 0.92 * dayK).lerp(_c2.setRGB(0.3, 0.32, 0.35).multiplyScalar(0.1 + 0.9 * dayK), rainK * 0.6);
-  GROUND_AMB.setRGB(0.24, 0.22, 0.2).multiplyScalar(0.12 + 0.88 * dayK);
+  else { LIGHT_DIR.copy(MOON); SUN_COL.setRGB(0.24, 0.28, 0.42).multiplyScalar((1 - dayK) * (1 - 0.4 * rainK)); }
+  // night: moonlit blue from above, warm street-lamp bounce from below, so streets, cars and people stay readable
+  SKY_AMB.setRGB(0.36, 0.45, 0.6).multiplyScalar(dayK).add(_c2.setRGB(0.15, 0.18, 0.27).multiplyScalar(night)).lerp(_c2.setRGB(0.3, 0.32, 0.35).multiplyScalar(0.3 + 0.7 * dayK), rainK * 0.5);
+  GROUND_AMB.setRGB(0.24, 0.22, 0.2).multiplyScalar(dayK).add(_c2.setRGB(0.3, 0.21, 0.12).multiplyScalar(night));
+  hemi.intensity = 1.1 + 1.1 * night; renderer.toneMappingExposure = 0.92 + 0.3 * night;
   hemi.color.copy(SKY_AMB); hemi.groundColor.copy(GROUND_AMB);
   sunLight.position.copy(LIGHT_DIR).multiplyScalar(100); sunLight.color.copy(SUN_COL).multiplyScalar(1 / 1.6); sunLight.intensity = 2.4 * Math.max(dayK, 0.25) * (1 - 0.5 * rainK);
-  scene.environmentIntensity = 0.08 + 0.52 * dayK * (1 - 0.5 * rainK);
+  scene.environmentIntensity = 0.08 + 0.2 * night + 0.52 * dayK * (1 - 0.5 * rainK); if (groundMat) groundMat.emissiveIntensity = 0.32 * sstep(0.2, 0.8, night); if (farMat) { const nk = sstep(0.2, 0.8, night); farMat.color.setScalar(1 - 0.88 * nk); farMat.emissiveIntensity = 0.7 * nk; }
   skyU.uNight.value = night; skyU.uRain.value = rainK; cityU.uNight.value = sstep(0.0, 0.7, night);
-  lampGlow.material.opacity = sstep(0.3, 0.8, night); headLights.material.opacity = tailLights.material.opacity = sstep(0.2, 0.7, night) * 0.9;
+  lampGlow.material.opacity = sstep(0.3, 0.8, night); lampPools.material.opacity = sstep(0.25, 0.8, night) * 0.38; lampPools.visible = lampPools.material.opacity > 0.01; headLights.material.opacity = tailLights.material.opacity = sstep(0.2, 0.7, night) * 0.9;
   rain.material.opacity = rainK * 0.45; rain.visible = rainK > 0.02;
   if (rain.visible) {
     const hp = camera.getWorldPosition(_a);
@@ -1686,16 +1739,35 @@ function updateBlobs(dt) {
   blobs.count = blobList.length; blobs.instanceMatrix.needsUpdate = true;
 }
 const stickyPool = Array.from({ length: 24 }, () => { const m = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#555555', roughness: 0.5 })); m.visible = false; scene.add(m); return { m, pos: m.position, vel: new V3(), life: 0, prev: new V3() }; });
+// Where a sticky web fired from this hand right now would go: straight down the hand's pointing ray,
+// nudged onto a person / car / bird / drone if one is within a few degrees of it.
+function stickyAim(h, out) {
+  let best = null, bestA = 0.075; // ~4.3 degrees
+  const cand = (p, rad) => {
+    const v = _e.subVectors(p, h.origin), d = v.length(); if (d < 2 || d > 160) return;
+    const a = Math.acos(clamp(v.dot(h.dir) / d, -1, 1)) - Math.atan(rad / d);
+    if (a < bestA) { bestA = a; best = p; }
+  };
+  if (chase.active && !chase.stopped) for (const w of chase.wheels) cand(w.getWorldPosition(new V3()), 0.6);
+  for (const d of drones) if (d.alive && d.enabled) cand(d.pos, 0.8);
+  for (const b of birds) if (b.webbed <= 0) cand(b.pos, 0.5);
+  if (crowd.ready) for (const p of crowd.people) { if (!p.active) continue; if (p.webbed <= 0) cand(new V3(p.pos.x, 1.1, p.pos.z), 0.4); if (p.dog && p.dog.webbed <= 0) cand(new V3(p.dog.pos.x, 0.45, p.dog.pos.z), 0.3); }
+  for (let i = 0; i < carBody.count; i++) if (!(cars[i].stopT > 0)) cand(carPos(cars[i], new V3()), 1.2);
+  if (best) { const blocked = raycastCity(h.origin, _e.subVectors(best, h.origin).normalize(), h.origin.distanceTo(best) - 0.5); if (!blocked) return { p: out.copy(best), locked: true }; }
+  const hit = raycastCity(h.origin, h.dir, 300);
+  return { p: hit ? out.copy(hit.p) : out.copy(h.origin).addScaledVector(h.dir, 160), locked: false };
+}
 function fireSticky(h) {
   const s = stickyPool.find((x) => x.life <= 0) || stickyPool[0];
-  s.pos.copy(h.origin); s.prev.copy(h.origin); s.vel.copy(h.dir).multiplyScalar(95).addScaledVector(S.V, 1); s.life = 2.2; s.m.visible = true;
+  const aim = stickyAim(h, new V3());
+  s.pos.copy(h.origin); s.prev.copy(h.origin); s.vel.subVectors(aim.p, h.origin).normalize().multiplyScalar(170); s.life = 1.6; s.m.visible = true;
   Audio.sticky(h.handed === 'left' ? -0.6 : 0.6); buzz(h, 0.4, 40);
 }
 function carPos(c, out) { return out.set(c.onAve ? c.line : c.s, 0.9, c.onAve ? c.s : c.line); }
 function updateSticky(dt) {
   for (const s of stickyPool) {
     if (s.life <= 0) continue;
-    s.life -= dt; s.prev.copy(s.pos); s.vel.y -= 5 * dt; s.pos.addScaledVector(s.vel, dt);
+    s.life -= dt; s.prev.copy(s.pos); s.pos.addScaledVector(s.vel, dt);
     if (Math.random() < 0.6) dust.emit(s.pos, _a.set(0, 0, 0), 0.25);
     let hitSomething = false;
     const end = (p) => { s.life = 0; s.m.visible = false; hitSomething = true; puff(p, 8, 2); Audio.splat(); };
@@ -1825,12 +1897,12 @@ function updateShadow() {
 
 // ============================================================ VR menu panel (left stick click) and the desktop menu (top-right)
 const MENU_ROWS = [...CFG_OPTS.map((o) => ({ key: o[0], label: o[1] })), { label: 'Start a car chase', act: () => { toggleMenu(false); startChase(); } }, { label: 'Back to the roof', act: () => { toggleMenu(false); respawn(); } }, { label: 'Close menu', act: () => toggleMenu(false) }];
-const vrMenu = makePanel(1024, 140 + MENU_ROWS.length * 80, 1.25); vrMenu.mesh.visible = false; vrMenu.mesh.renderOrder = 50; vrMenu.mesh.material.depthTest = false; scene.add(vrMenu.mesh);
+const vrMenu = makePanel(1024, 140 + MENU_ROWS.length * 80, 1.0); vrMenu.mesh.visible = false; vrMenu.mesh.renderOrder = 50; vrMenu.mesh.material.depthTest = false; rig.add(vrMenu.mesh);
 let menuOpen = false, menuHover = -1;
 function drawMenu() {
   const { g, w, h } = vrMenu; g.clearRect(0, 0, w, h); roundRect(g, 6, 6, w - 12, h - 12, 28); g.fillStyle = 'rgba(14,16,20,.92)'; g.fill();
   g.fillStyle = '#fff'; g.font = `800 56px ${FONT}`; g.textAlign = 'left'; g.fillText('SETTINGS', 40, 86);
-  g.font = `500 26px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.6)'; g.textAlign = 'right'; g.fillText('point + trigger to change', w - 40, 84);
+  g.font = `500 26px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.6)'; g.textAlign = 'right'; g.fillText('point + trigger  ·  or stick + A  ·  B closes', w - 40, 84);
   MENU_ROWS.forEach((r, i) => {
     const y = 120 + i * 80;
     if (i === menuHover) { roundRect(g, 24, y, w - 48, 70, 14); g.fillStyle = 'rgba(255,210,122,.22)'; g.fill(); }
@@ -1841,16 +1913,25 @@ function drawMenu() {
 }
 function toggleMenu(on) {
   menuOpen = on; vrMenu.mesh.visible = on && renderer.xr.isPresenting;
-  if (on) { camera.getWorldPosition(_a); const f = headForwardFlat(_b); vrMenu.mesh.position.copy(_a).addScaledVector(f, 1.5); vrMenu.mesh.position.y -= 0.15; vrMenu.mesh.lookAt(_a.x, vrMenu.mesh.position.y, _a.z); }
+  if (on) {
+    // place it in front of your face, in the rig's own space, so it travels with you
+    const head = camera.position, f = _b.set(0, 0, -1).applyQuaternion(camera.quaternion); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, -1); f.normalize();
+    vrMenu.mesh.position.copy(head).addScaledVector(f, 1.1); vrMenu.mesh.position.y = head.y - 0.1;
+    vrMenu.mesh.rotation.set(0, Math.atan2(-f.x, -f.z), 0);
+    menuHover = 0; S.menuV = S.V.clone(); S.V.set(0, 0, 0);
+    Audio.click();
+  } else if (S.menuV) { S.V.copy(S.menuV); S.menuV = null; }
   drawMenu();
 }
 const _plane = new THREE.Plane(), _ray = new THREE.Ray(), _inv = new THREE.Matrix4();
 function menuRowAt(h) {
   vrMenu.mesh.updateMatrixWorld(true);
-  _plane.setFromNormalAndCoplanarPoint(_a.set(0, 0, 1).applyQuaternion(vrMenu.mesh.quaternion), vrMenu.mesh.position);
-  _ray.set(h.origin, h.dir); const p = _ray.intersectPlane(_plane, _b); if (!p) return -1;
+  _plane.setFromNormalAndCoplanarPoint(_a.set(0, 0, 1).applyQuaternion(vrMenu.mesh.getWorldQuaternion(_q)), vrMenu.mesh.getWorldPosition(_c));
+  if (!h.ctrl) return -1;
+  _ray.origin.setFromMatrixPosition(h.ctrl.matrixWorld); _ray.direction.set(0, 0, -1).applyQuaternion(h.ctrl.getWorldQuaternion(_q2));
+  const p = _ray.intersectPlane(_plane, _b); if (!p) return -1;
   _inv.copy(vrMenu.mesh.matrixWorld).invert(); p.applyMatrix4(_inv);
-  const W = 1.25, H = W * vrMenu.h / vrMenu.w, px = (p.x / W + 0.5) * vrMenu.w, py = (0.5 - p.y / H) * vrMenu.h;
+  const W = 1.0, H = W * vrMenu.h / vrMenu.w, px = (p.x / W + 0.5) * vrMenu.w, py = (0.5 - p.y / H) * vrMenu.h;
   if (px < 0 || px > vrMenu.w) return -1;
   const i = Math.floor((py - 120) / 80); return i >= 0 && i < MENU_ROWS.length ? i : -1;
 }
@@ -1909,7 +1990,7 @@ renderer.setAnimationLoop((tms) => {
   const gdt = dt * S.timeScale;
   skyU.uSlow.value += ((S.slow ? 1 : 0) - skyU.uSlow.value) * Math.min(1, dt * 4); cityU.uSlow.value = skyU.uSlow.value; skyU.uTime.value = realTime;
 
-  for (let k = 0; k < 3; k++) physics(gdt / 3);
+  if (!menuOpen) for (let k = 0; k < 3; k++) physics(gdt / 3);
   S.speed = S.V.length();
   if (S.speed * 3.6 > 150 && !S.blazing && !S.grounded) { S.blazing = true; toast('150 KM/H  +150'); S.score += 150; }
   updateRig(dt);
