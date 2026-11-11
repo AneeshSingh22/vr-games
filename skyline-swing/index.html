@@ -760,7 +760,7 @@ const intro = makePanel(1024, 560, 2.4);
 {
   const { g, w, h } = intro; roundRect(g, 8, 8, w - 16, h - 16, 26); g.fillStyle = 'rgba(14,16,20,.8)'; g.fill();
   g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = `800 84px ${FONT}`; g.fillText('SKYLINE SWING', w / 2, 120);
-  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'jump · in the air: FLIP (push stick sideways to cartwheel)'], ['B / Y', 'hold for slow-mo'], ['LOOK', 'just turn your head · right stick snap-turns · left stick steers']];
+  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'jump · in the air: FLIP (push stick sideways to cartwheel)'], ['B / Y', 'hold for slow-mo'], ['LOOK', 'turn your head · right stick snap-turns · hold left stick click: back to roof']];
   lines.forEach(([k, v], i) => { const y = 215 + i * 62; g.textAlign = 'right'; g.font = `800 34px ${FONT}`; g.fillStyle = '#ffd27a'; g.fillText(k, 250, y); g.textAlign = 'left'; g.font = `500 31px ${FONT}`; g.fillStyle = '#fff'; g.fillText(v, 275, y); });
   g.textAlign = 'center'; g.font = `600 30px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('Tip: swing alternating hands, release near the top of each arc', w / 2, 525);
   intro.tex.needsUpdate = true; scene.add(intro.mesh);
@@ -968,7 +968,12 @@ function pollXR() {
     if (!trig && p.trig) letGo(h, true);
     if (h.rope) h.rope.climb = grip;
     if (ax && !p.ax) jumpOrFlip();
-    if (stick && !p.stick) respawn();
+    // back to the roof only on a deliberate 1.5 s hold of the LEFT stick click
+    if (stick && h.handed === 'left') {
+      p.holdT = (p.holdT || 0) + 1 / 72;
+      if (!p.holdToast && p.holdT > 0.35) { p.holdToast = true; toast('Keep holding to return to the roof'); }
+      if (p.holdT > 1.5 && !p.didRespawn) { p.didRespawn = true; respawn(); toast('Back on the roof'); }
+    } else { p.holdT = 0; p.holdToast = false; p.didRespawn = false; }
     if (by) slowHeld = true;
     const x = gp.axes[2] || 0, y = gp.axes[3] || 0;
     if (h.handed === 'left') S.move.set(Math.abs(x) > 0.15 ? x : 0, Math.abs(y) > 0.15 ? y : 0);
