@@ -130,7 +130,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 48, 24), skyMat); sky.
   scene.environment = new THREE.PMREMGenerator(renderer).fromScene(envScene, 0.03).texture;
   scene.environmentIntensity = 0.6;
 }
-scene.fog = new THREE.FogExp2(FOG, 0.00085);
+scene.fog = new THREE.FogExp2(FOG, 0.0006);
 const hemi = new THREE.HemisphereLight(SKY_AMB, GROUND_AMB, 1.1); scene.add(hemi);
 const sunLight = new THREE.DirectionalLight(new THREE.Color(1.0, 0.88, 0.72), 2.4); sunLight.position.copy(SUN).multiplyScalar(100); scene.add(sunLight);
 
@@ -216,7 +216,7 @@ function nearby(x, z) {
 
 // ============================================================ facade shader
 const cityU = { uSun: { value: SUN }, uSunCol: { value: SUN_COL }, uSkyCol: { value: SKY_AMB }, uGroundCol: { value: GROUND_AMB },
-  uFog: { value: FOG }, uFogD: { value: 0.00085 }, uSlow: { value: 0 } };
+  uFog: { value: FOG }, uFogD: { value: 0.0006 }, uSlow: { value: 0 } };
 const facadeMat = new THREE.ShaderMaterial({
   uniforms: cityU,
   vertexShader: `
@@ -498,7 +498,7 @@ class Web {
     this.state = 'dead'; this.mat = webMatBase.clone();
     this.tubes = [makeTube(0.008), makeTube(0.0035), makeTube(0.0035)];
     this.meshes = this.tubes.map((t) => { const m = new THREE.Mesh(t.geo, this.mat); m.frustumCulled = false; m.visible = false; scene.add(m); return m; });
-    this.anchor = new V3(); this.from = new V3(); this.dir = new V3(); this.rest = 0.1; this.life = 0; this.travel = 0; this.total = 0;
+    this.anchor = new V3(); this.from = new V3(); this.dir = new V3(); this.rest = 0.1; this.life = 0; this.travel = 0; this.total = 0; this.time = 0; this.vib = 0;
   }
   shoot(from, target, hit) {
     this.state = 'flying'; this.hit = hit; this.from.copy(from); this.anchor.copy(target);
@@ -509,26 +509,41 @@ class Web {
   update(dt, hand, ropeLen) {
     if (this.state === 'dead') return null;
     let event = null; const N = WN - 1;
-    const pinHand = this.state === 'flying' || this.state === 'attached';
+    const pinHand = false;
     let pinEnd = this.state !== 'falling';
     const end = this.p[N];
-    if (this.state === 'flying') {
-      this.travel += 260 * dt;
-      const k = Math.min(1, this.travel / this.total);
-      end.copy(this.from).addScaledVector(this.dir, this.total * k);
-      // the strand pays out behind the tip, slightly longer than the gap so it ripples
-      this.rest = Math.max(0.02, hand.distanceTo(end) * 1.03 / N);
-      if (k >= 1) { if (this.hit) { this.state = 'attached'; event = 'attached'; } else { this.state = 'falling'; pinEnd = false; } }
-    } else if (this.state === 'attached') {
-      end.copy(this.anchor); this.rest = (ropeLen + 0.35) / N;
+    this.time += dt;
+    if (this.state === 'flying' || this.state === 'attached') {
+      // Smooth, steady strand: a straight shot out, then a gentle sag when slack. No physics jitter.
+      let tip;
+      if (this.state === 'flying') {
+        this.travel += 300 * dt;
+        const k = Math.min(1, this.travel / this.total);
+        tip = _e.copy(this.from).addScaledVector(this.dir, this.total * k);
+        if (k >= 1) { if (this.hit) { this.state = 'attached'; event = 'attached'; this.vib = 0.08; } else { this.state = 'falling'; this.life = 2.5; } }
+      } else tip = _e.copy(this.anchor);
+      const d = hand.distanceTo(tip);
+      const slack = this.state === 'attached' ? Math.max(0, ropeLen + 0.3 - d) : 0;
+      const sag = Math.min(d * 0.25, Math.sqrt(3 * d * slack / 8));
+      const side = _d.subVectors(tip, hand).normalize().cross(UP); if (side.lengthSq() < 1e-6) side.set(1, 0, 0); side.normalize();
+      this.vib = Math.max(0, (this.vib || 0) - dt * 0.25);
+      for (let i = 0; i < WN; i++) {
+        const t = i / N, bell = Math.sin(Math.PI * t);
+        this.p[i].lerpVectors(hand, tip, t);
+        this.p[i].y -= sag * 4 * t * (1 - t);
+        if (this.vib > 0) this.p[i].addScaledVector(side, Math.sin(t * Math.PI * 3 - this.time * 40) * this.vib * bell);
+        this.o[i].copy(this.p[i]);
+      }
+      this.rest = Math.max(0.02, Math.max(d, ropeLen || d) / N);
+      this.build();
+      return event;
     } else {
       if (pinEnd) end.copy(this.anchor);
       this.life -= dt; if (this.life < 1.5) this.mat.opacity = Math.max(0, this.life / 1.5);
       if (this.life <= 0) { this.kill(); return null; }
     }
-    if (pinHand) this.p[0].copy(hand);
-    // verlet integrate
-    const g = this.state === 'flying' ? -3 : -9.8;
+    // hanging / falling strands drift under gravity
+    const g = -9.8;
     for (let i = 0; i < WN; i++) {
       if ((i === 0 && pinHand) || (i === N && pinEnd)) { this.o[i].copy(this.p[i]); continue; }
       const p = this.p[i], o = this.o[i];
@@ -548,7 +563,7 @@ class Web {
     this.build();
     return event;
   }
-  release() { if (this.state === 'attached') { this.state = 'hanging'; this.life = 6; } else if (this.state === 'flying') { this.state = 'falling'; this.life = 3; } }
+  release() { if (this.state === 'attached') { this.state = 'hanging'; this.life = 6; } else if (this.state === 'flying') { this.state = 'falling'; this.life = 2.5; } for (const o of this.o) o.y += 0; }
   kill() { this.state = 'dead'; this.meshes.forEach((m) => (m.visible = false)); }
   build() {
     const P = this.p; const t = _a, n1 = _b, n2 = _c, off = _d;
@@ -705,12 +720,18 @@ function makeShooter() {
   return g;
 }
 function makeReticle() {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: reticleTex, transparent: true, depthTest: false, toneMapped: false, fog: false, opacity: 0.85 }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: reticleTex, transparent: true, depthTest: false, toneMapped: false, fog: false, opacity: 0.95 }));
   s.renderOrder = 40; s.visible = false; scene.add(s); return s;
 }
+function makeAimLine() {
+  const geo = new THREE.CylinderGeometry(1, 1, 1, 5, 1, true).translate(0, 0.5, 0);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.35, depthWrite: false, toneMapped: false, fog: false }));
+  m.renderOrder = 39; m.visible = false; scene.add(m); return m;
+}
+const OK_COL = new THREE.Color('#38ff6a'), NO_COL = new THREE.Color('#ff3b3b');
 const hands = [0, 1].map((i) => ({
   i, ctrl: renderer.xr.getController(i), src: null, handed: i === 0 ? 'left' : 'right', prev: {},
-  rope: null, web: null, pending: null, origin: new V3(), dir: new V3(), reticle: makeReticle(), shooter: makeShooter(), aim: null,
+  rope: null, web: null, pending: null, origin: new V3(), dir: new V3(), reticle: makeReticle(), aimLine: makeAimLine(), shooter: makeShooter(), aim: null,
 }));
 for (const h of hands) {
   h.ctrl.add(h.shooter); rig.add(h.ctrl);
@@ -739,14 +760,14 @@ const intro = makePanel(1024, 560, 2.4);
 {
   const { g, w, h } = intro; roundRect(g, 8, 8, w - 16, h - 16, 26); g.fillStyle = 'rgba(14,16,20,.8)'; g.fill();
   g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = `800 84px ${FONT}`; g.fillText('SKYLINE SWING', w / 2, 120);
-  const lines = [['TRIGGER', 'point up at a building and hold to web · let go to release'], ['GRIP', 'climb up the web you are holding'], ['A / X', 'jump · in the air: FLIP (push stick sideways to cartwheel)'], ['B / Y', 'hold for slow-mo'], ['STICKS', 'left: run / steer · right: turn · click: back to this roof']];
+  const lines = [['TRIGGER', 'aim until the circle is GREEN, hold to swing, let go to release'], ['GRIP', 'climb up the web · from the ground a web pulls you up'], ['A / X', 'jump · in the air: FLIP (push stick sideways to cartwheel)'], ['B / Y', 'hold for slow-mo'], ['LOOK', 'just turn your head · right stick snap-turns · left stick steers']];
   lines.forEach(([k, v], i) => { const y = 215 + i * 62; g.textAlign = 'right'; g.font = `800 34px ${FONT}`; g.fillStyle = '#ffd27a'; g.fillText(k, 250, y); g.textAlign = 'left'; g.font = `500 31px ${FONT}`; g.fillStyle = '#fff'; g.fillText(v, 275, y); });
   g.textAlign = 'center'; g.font = `600 30px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText('Tip: swing alternating hands, release near the top of each arc', w / 2, 525);
   intro.tex.needsUpdate = true; scene.add(intro.mesh);
 }
 
 // ============================================================ player
-const GRAV = 17, AIR_ACC = 6, RUN = 8, MAXS = 75;
+const GRAV = 17, AIR_ACC = 6, RUN = 8, MAXS = 75, WEB_RANGE = 150;
 const S = { P: new V3(), V: new V3(), yaw: 0, pitch: 0, roll: 0, grounded: false, prevY: 0, flipT: -1, flipDir: 1, flips: 0,
   slow: false, meter: 1, score: 0, speed: 0, blazing: false, move: new THREE.Vector2(), timeScale: 1 };
 // pick a spawn rooftop: a tall prewar setback near midtown with a big roof
@@ -804,7 +825,7 @@ function raycastCity(o, d, maxT) {
 // Find a good swing anchor: must be well above the chest, so you fall into an arc instead of being dragged.
 function findAnchor(h) {
   const chestY = S.P.y + 1.3;
-  const tryDir = (d) => { const hit = raycastCity(h.origin, d, 140); return hit && hit.p.y > chestY + 6 && hit.t > 8 ? hit : null; };
+  const tryDir = (d) => { const hit = raycastCity(h.origin, d, WEB_RANGE); return hit && hit.p.y > chestY + 4 && hit.t > 5 ? hit : null; };
   let hit = tryDir(h.dir);
   if (!hit) {
     const flat = _e.set(h.dir.x, 0, h.dir.z); if (flat.lengthSq() < 1e-4) flat.set(-Math.sin(S.yaw), 0, -Math.cos(S.yaw)); flat.normalize();
@@ -835,7 +856,13 @@ function onAttach(h) {
   h.rope = { A: hit.p.clone(), L: chest.distanceTo(hit.p), climb: false };
   addSplat(hit.p, hit.n); puff(hit.p, 6, 2);
   Audio.stick(h.handed === 'left' ? -0.6 : 0.6); buzz(h, 0.55, 45);
-  if (S.grounded && hit.p.y > S.P.y + 4) { S.grounded = false; S.V.y += 2; }
+  const spd = S.V.length(), dist0 = h.rope.L;
+  if (S.grounded || spd < 9) {
+    const to = _b.subVectors(hit.p, chest).normalize();
+    S.grounded = false; S.P.y += 0.05;
+    S.V.addScaledVector(to, clamp(dist0 * 0.22, 9, 18)); S.V.y += 5;
+    h.rope.L = dist0 * 0.82; h.rope.launch = 0.6;
+  }
 }
 function letGo(h, flick) {
   if (h.web) { h.web.release(); h.web = null; }
@@ -871,7 +898,8 @@ function physics(dt) {
   for (const h of hands) {
     const r = h.rope; if (!r) continue;
     const dx = r.A.x - P.x, dy = r.A.y - (P.y + 1.3), dz = r.A.z - P.z, dist = Math.hypot(dx, dy, dz) || 1;
-    if (r.climb) { r.L = Math.max(4, r.L - 5.5 * dt); }
+    if (r.climb) { r.L = Math.max(4, r.L - 9 * dt); }
+    if (r.launch > 0) { r.launch -= dt; r.L = Math.max(4, r.L - 6 * dt); }
     // pumping: a little energy injected at the bottom of the arc keeps chains of swings going
     if (dy / dist > 0.75) { const hs = Math.hypot(V.x, V.z); if (hs > 2) { V.x += V.x / hs * 3.2 * dt; V.z += V.z / hs * 3.2 * dt; } }
   }
@@ -901,7 +929,7 @@ function physics(dt) {
     else if (k === 2) { P.z = b.minZ - R; V.z = Math.min(V.z, 0) * 0.2; } else { P.z = b.maxZ + R; V.z = Math.max(V.z, 0) * 0.2; }
   }
   if (P.y <= 0) { P.y = 0; if (V.y < 0) V.y = 0; S.grounded = true; }
-  for (const h of hands) if (h.rope && S.grounded && h.rope.A.y > P.y + 3 && Math.hypot(P.x - h.rope.A.x, P.y + 1.3 - h.rope.A.y, P.z - h.rope.A.z) >= h.rope.L - 0.05 && V.y >= 0) S.grounded = false;
+  for (const h of hands) if (h.rope && S.grounded && h.rope.A.y > P.y + 3 && (h.rope.launch > 0 || h.rope.climb || Math.hypot(P.x - h.rope.A.x, P.y + 1.3 - h.rope.A.y, P.z - h.rope.A.z) >= h.rope.L - 0.05)) { S.grounded = false; if (V.y < 1) V.y = 1; }
   if (S.grounded && !wasGrounded) {
     const k = clamp((impactV - 5) / 22, 0, 1); Audio.land(k); for (const h of hands) buzz(h, 0.25 + 0.6 * k, 110);
     if (impactV > 15) { toast('HERO LANDING  +50'); S.score += 50; puff(P, 30, 6); }
@@ -1024,12 +1052,22 @@ function updateHands(dt) {
   const xr = renderer.xr.isPresenting;
   for (const h of hands) {
     if (xr && h.src) { h.ctrl.getWorldPosition(h.origin); h.dir.set(0, 0, -1).applyQuaternion(h.ctrl.getWorldQuaternion(_q2)); }
-    // reticle shows where a web would stick
-    const show = (xr && h.src && !h.rope) || (!xr && !demo && !h.rope && h.i === 1);
+    // reticle + aim line: GREEN = a web will stick there, RED = out of reach / nothing to grab
+    const show = (xr && h.src && !h.rope && !(h.web && h.web.state === 'flying')) || (!xr && !demo && !h.rope && h.i === 1);
     if (show) {
-      const hit = findAnchor(h); h.reticle.visible = !!hit;
-      if (hit) { h.reticle.position.copy(hit.p); h.reticle.scale.setScalar(clamp(hit.t * 0.025, 0.2, 4)); }
-    } else h.reticle.visible = false;
+      const hit = findAnchor(h);
+      let target, ok = !!hit;
+      if (hit) target = hit.p;
+      else { const any = raycastCity(h.origin, h.dir, 400); target = any ? any.p : _a.copy(h.origin).addScaledVector(h.dir, WEB_RANGE); }
+      const col = ok ? OK_COL : NO_COL, dist = h.origin.distanceTo(target);
+      h.reticle.visible = true; h.reticle.position.copy(target); h.reticle.material.color.copy(col);
+      h.reticle.scale.setScalar(clamp(dist * 0.03, 0.15, 5) * (ok ? 1 : 0.7));
+      if (xr) {
+        const len = Math.min(dist, ok ? dist : 25), dvec = _b.subVectors(target, h.origin).normalize();
+        h.aimLine.visible = true; h.aimLine.position.copy(h.origin); h.aimLine.quaternion.setFromUnitVectors(UP, dvec);
+        h.aimLine.scale.set(0.004, len, 0.004); h.aimLine.material.color.copy(col); h.aimLine.material.opacity = ok ? 0.35 : 0.2;
+      } else h.aimLine.visible = false;
+    } else { h.reticle.visible = false; h.aimLine.visible = false; }
     if (h.web) {
       const ev = h.web.update(dt, h.origin, h.rope ? h.rope.L : (h.pending ? h.origin.distanceTo(h.pending.p) : 1));
       if (ev === 'attached') onAttach(h);
@@ -1049,8 +1087,8 @@ function updateSpeedFx(dt) {
   }
   slGeo.attributes.position.needsUpdate = true; slGeo.attributes.color.needsUpdate = true;
   const xr = renderer.xr.isPresenting;
-  let vs = xr ? clamp((sp - 22) / 45, 0, 0.5) : clamp((sp - 35) / 60, 0, 0.25);
-  if (S.flipT >= 0) vs = Math.max(vs, xr ? 0.85 : 0.35);
+  let vs = xr ? clamp((sp - 30) / 60, 0, 0.22) : clamp((sp - 35) / 60, 0, 0.2);
+  if (S.flipT >= 0) vs = Math.max(vs, xr ? 0.55 : 0.3);
   vigU.uStrength.value += (vs - vigU.uStrength.value) * Math.min(1, dt * 6);
   if (!xr) {
     const f = 75 + clamp((sp - 12) / 45, 0, 1) * 12; camera.fov += (f - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
